@@ -91,17 +91,17 @@ def fetch_odds():
                         etichetta = nome
                     log.info(f"  ✓ {evento['home_team']} vs {evento['away_team']} | {etichetta} | {q} ({best['bookmaker']})")
                     eventi.append({
-                        "id":         evento["id"],
-                        "home":       evento["home_team"],
-                        "away":       evento["away_team"],
-                        "league":     league,
-                        "commence":   evento["commence_time"],
-                        "mercato":    mkey,
-                        "etichetta":  etichetta,
-                        "quota":      q,
-                        "outcome":    nome,
-                        "point":      punto,
-                        "bookmaker":  best["bookmaker"],
+                        "id":        evento["id"],
+                        "home":      evento["home_team"],
+                        "away":      evento["away_team"],
+                        "league":    league,
+                        "commence":  evento["commence_time"],
+                        "mercato":   mkey,
+                        "etichetta": etichetta,
+                        "quota":     q,
+                        "outcome":   nome,
+                        "point":     punto,
+                        "bookmaker": best["bookmaker"],
                     })
         except Exception as e:
             log.error(f"Errore fetch {league}: {e}")
@@ -183,10 +183,20 @@ def calcola_score(evento, sh, sa):
     return min(score, 100), bd
 
 def trova_combinazioni(eventi):
+    now = datetime.now(timezone.utc)
     combos = []
     for e1, e2 in itertools.combinations(eventi, 2):
         if e1["id"] == e2["id"]:
             continue
+        try:
+            t1 = datetime.fromisoformat(e1["commence"].replace("Z", "+00:00"))
+            t2 = datetime.fromisoformat(e2["commence"].replace("Z", "+00:00"))
+            ore1 = (t1 - now).total_seconds() / 3600
+            ore2 = (t2 - now).total_seconds() / 3600
+            if not (0 <= ore1 <= 48) or not (0 <= ore2 <= 48):
+                continue
+        except:
+            pass
         qc = round(e1["quota"] * e2["quota"], 4)
         if 1.60 <= qc <= 2.60:
             combos.append((e1, e2, qc))
@@ -224,7 +234,7 @@ def invia_telegram(msg):
 
 def run():
     log.info("=== Avvio ciclo bot ===")
-    log.info(f"Range quote: {QUOTA_MIN} - {QUOTA_MAX}")
+    log.info(f"Range quote: {QUOTA_MIN} - {QUOTA_MAX} | MIN_SCORE: {MIN_SCORE}")
     _cache.clear()
     eventi = fetch_odds()
     if not eventi:
@@ -236,7 +246,7 @@ def run():
     combos = trova_combinazioni(eventi)
     if not combos:
         invia_telegram(
-            f"ℹ️ *Nessuna combinata valida* (quota comb. 1.60–2.60)\n"
+            f"ℹ️ *Nessuna combinata valida nelle prossime 48h*\n"
             f"_{datetime.now(timezone.utc).strftime('%d/%m %H:%M UTC')}_"
         )
         return
