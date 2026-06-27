@@ -23,14 +23,16 @@ MERCATI = ["h2h", "totals", "btts"]
 
 # League keys su The Odds API
 LEAGUES = [
+    "soccer_fifa_world_cup",
+    "soccer_usa_mls",
+    "soccer_brazil_campeonato",
+    "soccer_argentina_primera_division",
+    "soccer_japan_j_league",
     "soccer_italy_serie_a",
-    "soccer_italy_serie_b",
     "soccer_epl",
     "soccer_germany_bundesliga",
     "soccer_spain_la_liga",
     "soccer_france_ligue_one",
-    "soccer_uefa_champs_league",
-    "soccer_uefa_europa_league",
 ]
 
 # Mapping mercato → etichetta leggibile
