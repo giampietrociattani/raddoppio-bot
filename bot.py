@@ -37,13 +37,15 @@ LEAGUE_TO_FD = {
     "soccer_france_ligue_one":   "FL1",
 }
 
+BOOKMAKERS_EU = ["sisal", "bet365", "unibet", "williamhill", "betfair", "pinnacle", "marathonbet"]
+
 def fetch_odds():
     eventi = []
     for league in LEAGUES:
         url = (
             f"https://api.the-odds-api.com/v4/sports/{league}/odds/"
             f"?apiKey={ODDS_API_KEY}&regions=eu&markets=h2h,totals"
-            f"&bookmakers=sisal&oddsFormat=decimal&dateFormat=iso"
+            f"&oddsFormat=decimal&dateFormat=iso"
         )
         try:
             r = requests.get(url, timeout=10)
@@ -53,44 +55,54 @@ def fetch_odds():
             data = r.json()
             log.info(f"{league}: {len(data)} eventi trovati dall'API")
             for evento in data:
-                sisal_trovato = False
+                migliore = {}
                 for bm in evento.get("bookmakers", []):
-                    if bm["key"] != "sisal":
+                    if bm["key"] not in BOOKMAKERS_EU:
                         continue
-                    sisal_trovato = True
                     for market in bm.get("markets", []):
                         mkey = market["key"]
                         for outcome in market.get("outcomes", []):
                             q = outcome.get("price", 0)
-                            log.info(f"  Quote trovata: {evento['home_team']} vs {evento['away_team']} | {mkey} | {outcome['name']} | {q}")
                             if QUOTA_MIN <= q <= QUOTA_MAX:
-                                nome = outcome["name"]
-                                punto = outcome.get("point", "")
-                                if mkey == "totals":
-                                    etichetta = f"{nome} {punto} goal"
-                                elif mkey == "h2h":
-                                    mappa = {
-                                        "home": f"Vittoria {evento['home_team']} (1)",
-                                        "away": f"Vittoria {evento['away_team']} (2)",
-                                        "Draw": "Pareggio (X)"
+                                ok_key = f"{mkey}_{outcome['name']}_{outcome.get('point','')}"
+                                if ok_key not in migliore or q > migliore[ok_key]["quota"]:
+                                    migliore[ok_key] = {
+                                        "bookmaker": bm["key"],
+                                        "quota": q,
+                                        "outcome": outcome,
+                                        "mkey": mkey,
                                     }
-                                    etichetta = mappa.get(nome, nome)
-                                else:
-                                    etichetta = nome
-                                eventi.append({
-                                    "id":        evento["id"],
-                                    "home":      evento["home_team"],
-                                    "away":      evento["away_team"],
-                                    "league":    league,
-                                    "commence":  evento["commence_time"],
-                                    "mercato":   mkey,
-                                    "etichetta": etichetta,
-                                    "quota":     q,
-                                    "outcome":   nome,
-                                    "point":     punto,
-                                })
-                if not sisal_trovato:
-                    log.info(f"  Sisal non presente per: {evento['home_team']} vs {evento['away_team']}")
+                for ok_key, best in migliore.items():
+                    outcome = best["outcome"]
+                    mkey = best["mkey"]
+                    q = best["quota"]
+                    nome = outcome["name"]
+                    punto = outcome.get("point", "")
+                    if mkey == "totals":
+                        etichetta = f"{nome} {punto} goal"
+                    elif mkey == "h2h":
+                        mappa = {
+                            "home": f"Vittoria {evento['home_team']} (1)",
+                            "away": f"Vittoria {evento['away_team']} (2)",
+                            "Draw": "Pareggio (X)"
+                        }
+                        etichetta = mappa.get(nome, nome)
+                    else:
+                        etichetta = nome
+                    log.info(f"  ✓ {evento['home_team']} vs {evento['away_team']} | {etichetta} | {q} ({best['bookmaker']})")
+                    eventi.append({
+                        "id":         evento["id"],
+                        "home":       evento["home_team"],
+                        "away":       evento["away_team"],
+                        "league":     league,
+                        "commence":   evento["commence_time"],
+                        "mercato":    mkey,
+                        "etichetta":  etichetta,
+                        "quota":      q,
+                        "outcome":    nome,
+                        "point":      punto,
+                        "bookmaker":  best["bookmaker"],
+                    })
         except Exception as e:
             log.error(f"Errore fetch {league}: {e}")
     log.info(f"Quote nel range {QUOTA_MIN}-{QUOTA_MAX} trovate: {len(eventi)}")
@@ -217,7 +229,7 @@ def run():
     eventi = fetch_odds()
     if not eventi:
         invia_telegram(
-            f"ℹ️ *Nessuna quota nel range {QUOTA_MIN}–{QUOTA_MAX} trovata su Sisal*\n"
+            f"ℹ️ *Nessuna quota nel range {QUOTA_MIN}–{QUOTA_MAX} trovata*\n"
             f"_{datetime.now(timezone.utc).strftime('%d/%m %H:%M UTC')}_"
         )
         return
@@ -248,7 +260,7 @@ def run():
                 f"📌 *{e['home']} vs {e['away']}*",
                 f"   🏆 {e['league'].replace('soccer_','').replace('_',' ').title()}",
                 f"   🕐 {formatta_data(e['commence'])}",
-                f"   📊 *{e['etichetta']}* | Quota: *{e['quota']}*",
+                f"   📊 *{e['etichetta']}* | Quota: *{e['quota']}* ({e.get('bookmaker','?')})",
                 f"   {emoji_score(s)} Score: *{s}/100*",
             ]
             if sh:
@@ -271,7 +283,7 @@ _{datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M UTC')}_
 ━━━━━━━━━━━━━━━━━━━
 💰 *Quota combinata: {e1['quota']} × {e2['quota']} = {qc}*
 📉 Prob. reale stimata: ~{round((1/e1['quota'])*(1/e2['quota'])*0.93*100,1)}%
-⚠️ _Verifica agio e EV nell'app prima di giocare_
+⚠️ _Verifica la quota su Sisal prima di giocare_
 🔗 tinyurl.com/raddoppiando"""
         invia_telegram(msg)
         inviate += 1
