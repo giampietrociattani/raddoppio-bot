@@ -7,21 +7,15 @@ from datetime import datetime, timezone
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-# ── Configurazione ────────────────────────────────────────────────────────────
-TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
-ODDS_API_KEY     = os.environ.get("ODDS_API_KEY", "")
-FOOTBALL_API_KEY = os.environ.get("FOOTBALL_API_KEY", "")
-FOOTBALL_DATA_KEY= os.environ.get("FOOTBALL_DATA_KEY", "")
+TELEGRAM_TOKEN    = os.environ.get("TELEGRAM_TOKEN", "")
+TELEGRAM_CHAT_ID  = os.environ.get("TELEGRAM_CHAT_ID", "")
+ODDS_API_KEY      = os.environ.get("ODDS_API_KEY", "")
+FOOTBALL_DATA_KEY = os.environ.get("FOOTBALL_DATA_KEY", "")
 
-QUOTA_MIN = float(os.environ.get("QUOTA_MIN", "1.30"))
-QUOTA_MAX = float(os.environ.get("QUOTA_MAX", "1.65"))
+QUOTA_MIN = float(os.environ.get("QUOTA_MIN", "1.25"))
+QUOTA_MAX = float(os.environ.get("QUOTA_MAX", "1.85"))
 MIN_SCORE = int(os.environ.get("MIN_SCORE", "50"))
 
-# Mercati da cercare (The Odds API market keys)
-MERCATI = ["h2h", "totals", "btts"]
-
-# League keys su The Odds API
 LEAGUES = [
     "soccer_fifa_world_cup",
     "soccer_usa_mls",
@@ -35,91 +29,78 @@ LEAGUES = [
     "soccer_france_ligue_one",
 ]
 
-# Mapping mercato → etichetta leggibile
-LABEL_MAP = {
-    "h2h":    {"1": "Vittoria Casa (1)", "2": "Vittoria Ospite (2)", "Draw": "Pareggio (X)"},
-    "totals":  {},   # popolato dinamicamente: Over/Under X.X
-    "btts":   {"Yes": "Goal/Goal (GG)", "No": "No Goal (NG)"},
+LEAGUE_TO_FD = {
+    "soccer_italy_serie_a":      "SA",
+    "soccer_epl":                "PL",
+    "soccer_germany_bundesliga": "BL1",
+    "soccer_spain_la_liga":      "PD",
+    "soccer_france_ligue_one":   "FL1",
 }
 
-# ── The Odds API ──────────────────────────────────────────────────────────────
 def fetch_odds():
-    """Scarica tutte le quote Sisal per le leghe configurate."""
     eventi = []
     for league in LEAGUES:
-        for mercato in MERCATI:
-            url = (
-                f"https://api.the-odds-api.com/v4/sports/{league}/odds/"
-                f"?apiKey={ODDS_API_KEY}&regions=eu&markets={mercato}"
-                f"&bookmakers=sisal&oddsFormat=decimal&dateFormat=iso"
-            )
-            try:
-                r = requests.get(url, timeout=10)
-                if r.status_code != 200:
-                    log.warning(f"Odds API {league}/{mercato}: {r.status_code}")
-                    continue
-                data = r.json()
-                for evento in data:
-                    for bm in evento.get("bookmakers", []):
-                        if bm["key"] != "sisal":
-                            continue
-                        for market in bm.get("markets", []):
-                            for outcome in market.get("outcomes", []):
-                                q = outcome.get("price", 0)
-                                if QUOTA_MIN <= q <= QUOTA_MAX:
-                                    nome = outcome["name"]
-                                    # Etichetta leggibile
-                                    if mercato == "totals":
-                                        punto = outcome.get("point", "")
-                                        etichetta = f"{nome} {punto} goal"
-                                    elif mercato == "h2h":
-                                        etichetta = LABEL_MAP["h2h"].get(nome, nome)
-                                    else:
-                                        etichetta = LABEL_MAP["btts"].get(nome, nome)
-
-                                    eventi.append({
-                                        "id":        evento["id"],
-                                        "home":      evento["home_team"],
-                                        "away":      evento["away_team"],
-                                        "league":    league,
-                                        "commence":  evento["commence_time"],
-                                        "mercato":   mercato,
-                                        "etichetta": etichetta,
-                                        "quota":     q,
-                                        "outcome":   nome,
-                                        "point":     outcome.get("point"),
-                                    })
-            except Exception as e:
-                log.error(f"Errore fetch odds {league}/{mercato}: {e}")
+        url = (
+            f"https://api.the-odds-api.com/v4/sports/{league}/odds/"
+            f"?apiKey={ODDS_API_KEY}&regions=eu&markets=h2h,totals"
+            f"&bookmakers=sisal&oddsFormat=decimal&dateFormat=iso"
+        )
+        try:
+            r = requests.get(url, timeout=10)
+            if r.status_code != 200:
+                log.warning(f"Odds API {league}: {r.status_code} {r.text[:100]}")
+                continue
+            data = r.json()
+            for evento in data:
+                for bm in evento.get("bookmakers", []):
+                    if bm["key"] != "sisal":
+                        continue
+                    for market in bm.get("markets", []):
+                        mkey = market["key"]
+                        for outcome in market.get("outcomes", []):
+                            q = outcome.get("price", 0)
+                            if QUOTA_MIN <= q <= QUOTA_MAX:
+                                nome = outcome["name"]
+                                punto = outcome.get("point", "")
+                                if mkey == "totals":
+                                    etichetta = f"{nome} {punto} goal"
+                                elif mkey == "h2h":
+                                    mappa = {
+                                        "home": f"Vittoria {evento['home_team']} (1)",
+                                        "away": f"Vittoria {evento['away_team']} (2)",
+                                        "Draw": "Pareggio (X)"
+                                    }
+                                    etichetta = mappa.get(nome, nome)
+                                else:
+                                    etichetta = nome
+                                eventi.append({
+                                    "id":        evento["id"],
+                                    "home":      evento["home_team"],
+                                    "away":      evento["away_team"],
+                                    "league":    league,
+                                    "commence":  evento["commence_time"],
+                                    "mercato":   mkey,
+                                    "etichetta": etichetta,
+                                    "quota":     q,
+                                    "outcome":   nome,
+                                    "point":     punto,
+                                })
+        except Exception as e:
+            log.error(f"Errore fetch {league}: {e}")
     log.info(f"Quote nel range trovate: {len(eventi)}")
     return eventi
 
+_cache = {}
 
-# ── Football Data API (statistiche) ──────────────────────────────────────────
-# Mapping league key → football-data.org competition code
-LEAGUE_TO_FD = {
-    "soccer_italy_serie_a":         "SA",
-    "soccer_italy_serie_b":         "SB",
-    "soccer_epl":                   "PL",
-    "soccer_germany_bundesliga":    "BL1",
-    "soccer_spain_la_liga":         "PD",
-    "soccer_france_ligue_one":      "FL1",
-    "soccer_uefa_champs_league":    "CL",
-}
-
-_team_stats_cache = {}
-
-def get_team_stats_fd(team_name, competition_code):
-    """Recupera le ultime 10 partite di una squadra da football-data.org."""
-    cache_key = f"{team_name}_{competition_code}"
-    if cache_key in _team_stats_cache:
-        return _team_stats_cache[cache_key]
-
+def get_team_stats(team_name, comp):
+    key = f"{team_name}_{comp}"
+    if key in _cache:
+        return _cache[key]
     headers = {"X-Auth-Token": FOOTBALL_DATA_KEY}
-    # Cerca la squadra per nome
-    url = f"https://api.football-data.org/v4/competitions/{competition_code}/teams"
     try:
-        r = requests.get(url, headers=headers, timeout=10)
+        r = requests.get(
+            f"https://api.football-data.org/v4/competitions/{comp}/teams",
+            headers=headers, timeout=10)
         if r.status_code != 200:
             return None
         teams = r.json().get("teams", [])
@@ -127,317 +108,173 @@ def get_team_stats_fd(team_name, competition_code):
                      or (t.get("shortName") and team_name.lower() in t["shortName"].lower())), None)
         if not team:
             return None
-        team_id = team["id"]
-
-        # Ultime partite
-        url2 = f"https://api.football-data.org/v4/teams/{team_id}/matches?status=FINISHED&limit=10"
-        r2 = requests.get(url2, headers=headers, timeout=10)
+        r2 = requests.get(
+            f"https://api.football-data.org/v4/teams/{team['id']}/matches?status=FINISHED&limit=10",
+            headers=headers, timeout=10)
         if r2.status_code != 200:
             return None
         matches = r2.json().get("matches", [])
-
-        goals_scored = []
-        goals_conceded = []
-        results = []
+        gs_list, gc_list, results = [], [], []
         for m in matches:
-            home_id = m["homeTeam"]["id"]
-            hs = m["score"]["fullTime"]["home"]
+            hs  = m["score"]["fullTime"]["home"]
             as_ = m["score"]["fullTime"]["away"]
             if hs is None or as_ is None:
                 continue
-            if home_id == team_id:
-                goals_scored.append(hs)
-                goals_conceded.append(as_)
-                results.append("W" if hs > as_ else ("D" if hs == as_ else "L"))
-            else:
-                goals_scored.append(as_)
-                goals_conceded.append(hs)
-                results.append("W" if as_ > hs else ("D" if as_ == hs else "L"))
-
-        n = len(goals_scored)
+            is_home = m["homeTeam"]["id"] == team["id"]
+            gs = hs if is_home else as_
+            gc = as_ if is_home else hs
+            gs_list.append(gs); gc_list.append(gc)
+            results.append("W" if gs > gc else ("D" if gs == gc else "L"))
+        n = len(gs_list)
         if n == 0:
             return None
-
-        over25 = sum(1 for gs, gc in zip(goals_scored, goals_conceded) if gs + gc > 2.5) / n
-        gg     = sum(1 for gs, gc in zip(goals_scored, goals_conceded) if gs > 0 and gc > 0) / n
-        avg_scored    = sum(goals_scored) / n
-        avg_conceded  = sum(goals_conceded) / n
-        forma = "".join(results[-5:])
-
         stats = {
-            "avg_scored":   round(avg_scored, 2),
-            "avg_conceded": round(avg_conceded, 2),
-            "over25_pct":   round(over25 * 100, 1),
-            "gg_pct":       round(gg * 100, 1),
-            "forma":        forma,
-            "partite":      n,
+            "avg_scored":   round(sum(gs_list)/n, 2),
+            "avg_conceded": round(sum(gc_list)/n, 2),
+            "over25_pct":   round(sum(1 for g,c in zip(gs_list,gc_list) if g+c>2.5)/n*100, 1),
+            "gg_pct":       round(sum(1 for g,c in zip(gs_list,gc_list) if g>0 and c>0)/n*100, 1),
+            "forma":        "".join(results[-5:]),
         }
-        _team_stats_cache[cache_key] = stats
+        _cache[key] = stats
         return stats
     except Exception as e:
-        log.warning(f"FD stats error {team_name}: {e}")
+        log.warning(f"Stats error {team_name}: {e}")
         return None
 
-
-def get_h2h_fd(home, away, competition_code):
-    """Head to head ultimi 5 incontri tra le due squadre."""
-    headers = {"X-Auth-Token": FOOTBALL_DATA_KEY}
-    url = f"https://api.football-data.org/v4/competitions/{competition_code}/teams"
-    try:
-        r = requests.get(url, headers=headers, timeout=10)
-        if r.status_code != 200:
-            return None
-        teams = r.json().get("teams", [])
-        def find_team(name):
-            return next((t for t in teams if name.lower() in t["name"].lower()
-                         or (t.get("shortName") and name.lower() in t["shortName"].lower())), None)
-        th = find_team(home)
-        ta = find_team(away)
-        if not th or not ta:
-            return None
-
-        url2 = f"https://api.football-data.org/v4/teams/{th['id']}/matches?status=FINISHED&limit=20"
-        r2 = requests.get(url2, headers=headers, timeout=10)
-        if r2.status_code != 200:
-            return None
-        matches = [m for m in r2.json().get("matches", [])
-                   if m["homeTeam"]["id"] == ta["id"] or m["awayTeam"]["id"] == ta["id"]][:5]
-        if not matches:
-            return None
-
-        over25_h2h = sum(1 for m in matches
-                         if (m["score"]["fullTime"]["home"] or 0) + (m["score"]["fullTime"]["away"] or 0) > 2.5)
-        gg_h2h = sum(1 for m in matches
-                     if (m["score"]["fullTime"]["home"] or 0) > 0 and (m["score"]["fullTime"]["away"] or 0) > 0)
-        return {
-            "partite":    len(matches),
-            "over25_h2h": over25_h2h,
-            "gg_h2h":     gg_h2h,
-        }
-    except Exception as e:
-        log.warning(f"H2H error {home} vs {away}: {e}")
-        return None
-
-
-# ── Score algoritmo ────────────────────────────────────────────────────────────
-def calcola_score(evento, stats_home, stats_away, h2h):
-    """Score 0–100 basato su statistiche. Restituisce score e breakdown."""
-    mercato  = evento["mercato"]
-    outcome  = evento["outcome"]
-    point    = evento.get("point")
-    quota    = evento["quota"]
-    score    = 0
-    breakdown = []
-
-    # Probabilità implicita dalla quota (con agio stimato 7%)
-    p_implicita = (1 / quota) * (1 - 0.035)  # correzione agio singola
-
-    if mercato == "totals" and stats_home and stats_away:
-        soglia = float(point) if point else 2.5
-        avg_totale = stats_home["avg_scored"] + stats_away["avg_conceded"] * 0.5 + \
-                     stats_away["avg_scored"] + stats_home["avg_conceded"] * 0.5
-        avg_totale /= 2 * 0.7 + 0.3  # normalizzazione
-
+def calcola_score(evento, sh, sa):
+    mercato = evento["mercato"]
+    outcome = evento["outcome"]
+    score, bd = 0, []
+    if mercato == "totals" and sh and sa:
         if outcome == "Over":
-            p_stat = stats_home["over25_pct"] / 100 * 0.5 + stats_away["over25_pct"] / 100 * 0.5
-            media_pts = min(avg_totale / soglia, 1.0)
-            s = round((p_stat * 50 + media_pts * 30))
-            score += s
-            breakdown.append(f"Over {soglia}: stat combinata {p_stat*100:.0f}% → +{s}pt")
+            p = (sh["over25_pct"] + sa["over25_pct"]) / 2
         else:
-            p_stat = (100 - stats_home["over25_pct"]) / 100 * 0.5 + (100 - stats_away["over25_pct"]) / 100 * 0.5
-            s = round(p_stat * 50)
-            score += s
-            breakdown.append(f"Under {soglia}: stat combinata {p_stat*100:.0f}% → +{s}pt")
-
-        if h2h:
-            if outcome == "Over":
-                h2h_pct = h2h["over25_h2h"] / h2h["partite"]
-            else:
-                h2h_pct = 1 - h2h["over25_h2h"] / h2h["partite"]
-            s2 = round(h2h_pct * 20)
-            score += s2
-            breakdown.append(f"H2H {h2h['over25_h2h']}/{h2h['partite']} Over → +{s2}pt")
-
-    elif mercato == "btts" and stats_home and stats_away:
-        if outcome == "Yes":
-            p_stat = stats_home["gg_pct"] / 100 * 0.5 + stats_away["gg_pct"] / 100 * 0.5
-        else:
-            p_stat = (100 - stats_home["gg_pct"]) / 100 * 0.5 + (100 - stats_away["gg_pct"]) / 100 * 0.5
-        s = round(p_stat * 70)
+            p = (100 - sh["over25_pct"] + 100 - sa["over25_pct"]) / 2
+        s = round(p * 0.8)
         score += s
-        breakdown.append(f"GG/NG stat: {p_stat*100:.0f}% → +{s}pt")
-        if h2h:
-            h2h_pct = h2h["gg_h2h"] / h2h["partite"] if outcome == "Yes" else 1 - h2h["gg_h2h"] / h2h["partite"]
-            s2 = round(h2h_pct * 20)
-            score += s2
-            breakdown.append(f"H2H GG {h2h['gg_h2h']}/{h2h['partite']} → +{s2}pt")
-
-    elif mercato == "h2h" and stats_home and stats_away:
-        # Per 1X2 usiamo la forma
-        forma_score = 0
-        if outcome == "1":
-            for r in stats_home.get("forma", "")[-5:]:
-                forma_score += {"W": 3, "D": 1, "L": 0}.get(r, 0)
-            s = round(forma_score / 15 * 60)
-        elif outcome == "2":
-            for r in stats_away.get("forma", "")[-5:]:
-                forma_score += {"W": 3, "D": 1, "L": 0}.get(r, 0)
-            s = round(forma_score / 15 * 60)
-        else:
-            s = 40  # pareggio: score base neutro
+        bd.append(f"Stat Over/Under combinata: {p:.1f}% → +{s}pt")
+    elif mercato == "h2h" and sh and sa:
+        forma = sh["forma"] if outcome == "home" else (sa["forma"] if outcome == "away" else "")
+        pts = sum({"W":3,"D":1,"L":0}.get(c,0) for c in forma[-5:])
+        s = round(pts / 15 * 60)
         score += s
-        breakdown.append(f"Forma: {s}pt")
+        bd.append(f"Forma recente: {forma} → +{s}pt")
     else:
-        # Nessuna stat disponibile — score base dalla quota
         score = 45
-        breakdown.append("Nessuna statistica disponibile — score base 45")
+        bd.append("Nessuna statistica disponibile — score base 45")
+    return min(score, 100), bd
 
-    score = min(score, 100)
-    return score, breakdown
-
-
-# ── Trova combinazioni ─────────────────────────────────────────────────────────
 def trova_combinazioni(eventi):
-    """Crea coppie di eventi diversi con quota combinata intorno a 2.00."""
-    combinazioni = []
+    combos = []
     for e1, e2 in itertools.combinations(eventi, 2):
-        # No stesso match
         if e1["id"] == e2["id"]:
             continue
-        q_comb = round(e1["quota"] * e2["quota"], 4)
-        # Quota combinata tra 1.70 e 2.40
-        if 1.70 <= q_comb <= 2.40:
-            combinazioni.append((e1, e2, q_comb))
-    # Ordina per quota combinata più vicina a 2.00
-    combinazioni.sort(key=lambda x: abs(x[2] - 2.00))
-    return combinazioni[:5]  # max 5 combinazioni per ciclo
+        qc = round(e1["quota"] * e2["quota"], 4)
+        if 1.60 <= qc <= 2.60:
+            combos.append((e1, e2, qc))
+    combos.sort(key=lambda x: abs(x[2] - 2.00))
+    return combos[:5]
 
-
-# ── Messaggio Telegram ─────────────────────────────────────────────────────────
-def formatta_data(iso_str):
+def formatta_data(iso):
     try:
-        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
         return dt.strftime("%d/%m %H:%M")
     except:
-        return iso_str
-
-def emoji_score(s):
-    if s >= 75: return "🟢"
-    if s >= 55: return "🟡"
-    return "🔴"
+        return iso
 
 def emoji_forma(f):
-    return "".join({"W": "✅", "D": "➖", "L": "❌"}.get(c, c) for c in f)
+    return "".join({"W":"✅","D":"➖","L":"❌"}.get(c,c) for c in f)
 
-def costruisci_messaggio(e1, e2, q_comb, score1, bd1, stats1h, stats1a, score2, bd2, stats2h, stats2a):
-    ts = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
-    score_medio = round((score1 + score2) / 2)
-
-    def blocco_evento(e, score, bd, sh, sa):
-        lines = []
-        lines.append(f"📌 *{e['home']} vs {e['away']}*")
-        lines.append(f"   🏆 {e['league'].replace('soccer_','').replace('_',' ').title()}")
-        lines.append(f"   🕐 {formatta_data(e['commence'])}")
-        lines.append(f"   📊 Mercato: *{e['etichetta']}*")
-        lines.append(f"   💶 Quota Sisal: *{e['quota']}*")
-        lines.append(f"   {emoji_score(score)} Score: *{score}/100*")
-        if sh:
-            lines.append(f"   🏠 {e['home']}: media {sh['avg_scored']}⚽ segnati | Over25: {sh['over25_pct']}% | GG: {sh['gg_pct']}% | Forma: {emoji_forma(sh['forma'])}")
-        if sa:
-            lines.append(f"   ✈️ {e['away']}: media {sa['avg_scored']}⚽ segnati | Over25: {sa['over25_pct']}% | GG: {sa['gg_pct']}% | Forma: {emoji_forma(sa['forma'])}")
-        for b in bd:
-            lines.append(f"   ↳ {b}")
-        return "\n".join(lines)
-
-    msg = f"""🔔 *COMBINATA TROVATA* — Score medio: {emoji_score(score_medio)} *{score_medio}/100*
-_{ts}_
-
-━━━━━━━━━━━━━━━━━━━
-{blocco_evento(e1, score1, bd1, stats1h, stats1a)}
-
-━━━━━━━━━━━━━━━━━━━
-{blocco_evento(e2, score2, bd2, stats2h, stats2a)}
-
-━━━━━━━━━━━━━━━━━━━
-💰 *Quota combinata: {e1['quota']} × {e2['quota']} = {q_comb}*
-📉 Prob. reale stimata: ~{round((1/e1['quota'])*(1/e2['quota'])*0.93*100, 1)}%
-⚠️ _Agio doppio sulla combinata — vedi app per EV esatto_
-"""
-    return msg
-
+def emoji_score(s):
+    return "🟢" if s >= 75 else ("🟡" if s >= 55 else "🔴")
 
 def invia_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": msg,
-        "parse_mode": "Markdown",
-        "disable_web_page_preview": True,
-    }
     try:
-        r = requests.post(url, json=payload, timeout=10)
+        r = requests.post(url, json={
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": msg,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True
+        }, timeout=10)
         if r.status_code == 200:
-            log.info("Messaggio Telegram inviato")
+            log.info("Messaggio Telegram inviato ✓")
         else:
             log.error(f"Telegram error: {r.status_code} {r.text}")
     except Exception as e:
         log.error(f"Telegram send error: {e}")
 
-
-def invia_nessun_risultato():
-    ts = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
-    msg = f"ℹ️ *Nessuna combinata trovata* _{ts}_\nNessuna coppia di eventi nel range {QUOTA_MIN}–{QUOTA_MAX} con quota combinata 1.70–2.40."
-    invia_telegram(msg)
-
-
-# ── Ciclo principale ──────────────────────────────────────────────────────────
 def run():
     log.info("=== Avvio ciclo bot ===")
-    _team_stats_cache.clear()
-
+    _cache.clear()
     eventi = fetch_odds()
     if not eventi:
-        log.info("Nessun evento nel range quote")
-        invia_nessun_risultato()
+        invia_telegram(
+            f"ℹ️ *Nessuna quota nel range {QUOTA_MIN}–{QUOTA_MAX} trovata su Sisal*\n"
+            f"_{datetime.now(timezone.utc).strftime('%d/%m %H:%M UTC')}_"
+        )
         return
-
-    combinazioni = trova_combinazioni(eventi)
-    if not combinazioni:
-        log.info("Nessuna combinazione valida trovata")
-        invia_nessun_risultato()
+    combos = trova_combinazioni(eventi)
+    if not combos:
+        invia_telegram(
+            f"ℹ️ *Nessuna combinata valida* (quota comb. 1.60–2.60)\n"
+            f"_{datetime.now(timezone.utc).strftime('%d/%m %H:%M UTC')}_"
+        )
         return
-
     inviate = 0
-    for e1, e2, q_comb in combinazioni:
+    for e1, e2, qc in combos:
         comp1 = LEAGUE_TO_FD.get(e1["league"])
         comp2 = LEAGUE_TO_FD.get(e2["league"])
+        sh1 = get_team_stats(e1["home"], comp1) if comp1 else None
+        sa1 = get_team_stats(e1["away"], comp1) if comp1 else None
+        sh2 = get_team_stats(e2["home"], comp2) if comp2 else None
+        sa2 = get_team_stats(e2["away"], comp2) if comp2 else None
+        s1, bd1 = calcola_score(e1, sh1, sa1)
+        s2, bd2 = calcola_score(e2, sh2, sa2)
+        sm = (s1 + s2) / 2
+        log.info(f"{e1['home']} vs {e1['away']} ({e1['quota']}) + {e2['home']} vs {e2['away']} ({e2['quota']}) | qComb={qc} | score={sm:.0f}")
+        if sm < MIN_SCORE:
+            continue
 
-        sh1 = get_team_stats_fd(e1["home"], comp1) if comp1 else None
-        sa1 = get_team_stats_fd(e1["away"], comp1) if comp1 else None
-        h2h1 = get_h2h_fd(e1["home"], e1["away"], comp1) if comp1 else None
+        def blocco(e, s, bd, sh, sa):
+            lines = [
+                f"📌 *{e['home']} vs {e['away']}*",
+                f"   🏆 {e['league'].replace('soccer_','').replace('_',' ').title()}",
+                f"   🕐 {formatta_data(e['commence'])}",
+                f"   📊 *{e['etichetta']}* | Quota: *{e['quota']}*",
+                f"   {emoji_score(s)} Score: *{s}/100*",
+            ]
+            if sh:
+                lines.append(f"   🏠 {e['home']}: {sh['avg_scored']}⚽/g | Over25: {sh['over25_pct']}% | GG: {sh['gg_pct']}% | {emoji_forma(sh['forma'])}")
+            if sa:
+                lines.append(f"   ✈️ {e['away']}: {sa['avg_scored']}⚽/g | Over25: {sa['over25_pct']}% | GG: {sa['gg_pct']}% | {emoji_forma(sa['forma'])}")
+            for b in bd:
+                lines.append(f"   ↳ {b}")
+            return "\n".join(lines)
 
-        sh2 = get_team_stats_fd(e2["home"], comp2) if comp2 else None
-        sa2 = get_team_stats_fd(e2["away"], comp2) if comp2 else None
-        h2h2 = get_h2h_fd(e2["home"], e2["away"], comp2) if comp2 else None
+        msg = f"""🔔 *COMBINATA TROVATA* {emoji_score(round(sm))} Score: *{round(sm)}/100*
+_{datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M UTC')}_
 
-        score1, bd1 = calcola_score(e1, sh1, sa1, h2h1)
-        score2, bd2 = calcola_score(e2, sh2, sa2, h2h2)
-        score_medio = (score1 + score2) / 2
+━━━━━━━━━━━━━━━━━━━
+{blocco(e1, s1, bd1, sh1, sa1)}
 
-        log.info(f"Combo: {e1['home']} vs {e1['away']} ({e1['quota']}) + {e2['home']} vs {e2['away']} ({e2['quota']}) | Score: {score_medio:.0f}")
+━━━━━━━━━━━━━━━━━━━
+{blocco(e2, s2, bd2, sh2, sa2)}
 
-        if score_medio >= MIN_SCORE:
-            msg = costruisci_messaggio(e1, e2, q_comb, score1, bd1, sh1, sa1, score2, bd2, sh2, sa2)
-            invia_telegram(msg)
-            inviate += 1
+━━━━━━━━━━━━━━━━━━━
+💰 *Quota combinata: {e1['quota']} × {e2['quota']} = {qc}*
+📉 Prob. reale stimata: ~{round((1/e1['quota'])*(1/e2['quota'])*0.93*100,1)}%
+⚠️ _Verifica agio e EV nell'app prima di giocare_
+🔗 tinyurl.com/raddoppiando"""
+        invia_telegram(msg)
+        inviate += 1
 
     if inviate == 0:
-        log.info(f"Tutte le combinazioni sotto il MIN_SCORE ({MIN_SCORE})")
-        invia_nessun_risultato()
-
-    log.info(f"=== Ciclo completato — {inviate} messaggi inviati ===")
-
+        invia_telegram(
+            f"ℹ️ *Combinazioni trovate ma score troppo basso* (min {MIN_SCORE}/100)\n"
+            f"_{datetime.now(timezone.utc).strftime('%d/%m %H:%M UTC')}_"
+        )
+    log.info(f"=== Fine ciclo — {inviate} messaggi inviati ===")
 
 if __name__ == "__main__":
     run()
