@@ -14,7 +14,7 @@ FOOTBALL_DATA_KEY = os.environ.get("FOOTBALL_DATA_KEY", "")
 
 QUOTA_MIN = float(os.environ.get("QUOTA_MIN", "1.25"))
 QUOTA_MAX = float(os.environ.get("QUOTA_MAX", "1.85"))
-MIN_SCORE = int(os.environ.get("MIN_SCORE", "50"))
+MIN_SCORE = int(os.environ.get("MIN_SCORE", "40"))
 
 LEAGUES = [
     "soccer_fifa_world_cup",
