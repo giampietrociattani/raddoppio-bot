@@ -48,17 +48,21 @@ def fetch_odds():
         try:
             r = requests.get(url, timeout=10)
             if r.status_code != 200:
-                log.warning(f"Odds API {league}: {r.status_code} {r.text[:100]}")
+                log.warning(f"Odds API {league}: {r.status_code} {r.text[:200]}")
                 continue
             data = r.json()
+            log.info(f"{league}: {len(data)} eventi trovati dall'API")
             for evento in data:
+                sisal_trovato = False
                 for bm in evento.get("bookmakers", []):
                     if bm["key"] != "sisal":
                         continue
+                    sisal_trovato = True
                     for market in bm.get("markets", []):
                         mkey = market["key"]
                         for outcome in market.get("outcomes", []):
                             q = outcome.get("price", 0)
+                            log.info(f"  Quote trovata: {evento['home_team']} vs {evento['away_team']} | {mkey} | {outcome['name']} | {q}")
                             if QUOTA_MIN <= q <= QUOTA_MAX:
                                 nome = outcome["name"]
                                 punto = outcome.get("point", "")
@@ -85,9 +89,11 @@ def fetch_odds():
                                     "outcome":   nome,
                                     "point":     punto,
                                 })
+                if not sisal_trovato:
+                    log.info(f"  Sisal non presente per: {evento['home_team']} vs {evento['away_team']}")
         except Exception as e:
             log.error(f"Errore fetch {league}: {e}")
-    log.info(f"Quote nel range trovate: {len(eventi)}")
+    log.info(f"Quote nel range {QUOTA_MIN}-{QUOTA_MAX} trovate: {len(eventi)}")
     return eventi
 
 _cache = {}
@@ -206,6 +212,7 @@ def invia_telegram(msg):
 
 def run():
     log.info("=== Avvio ciclo bot ===")
+    log.info(f"Range quote: {QUOTA_MIN} - {QUOTA_MAX}")
     _cache.clear()
     eventi = fetch_odds()
     if not eventi:
