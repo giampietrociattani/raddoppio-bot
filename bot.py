@@ -53,7 +53,6 @@ def fetch_odds():
                 log.warning(f"Odds API {league}: {r.status_code} {r.text[:200]}")
                 continue
             data = r.json()
-            log.info(f"{league}: {len(data)} eventi trovati dall'API")
             for evento in data:
                 migliore = {}
                 for bm in evento.get("bookmakers", []):
@@ -89,7 +88,6 @@ def fetch_odds():
                         etichetta = mappa.get(nome, nome)
                     else:
                         etichetta = nome
-                    log.info(f"  ✓ {evento['home_team']} vs {evento['away_team']} | {etichetta} | {q} ({best['bookmaker']})")
                     eventi.append({
                         "id":        evento["id"],
                         "home":      evento["home_team"],
@@ -178,8 +176,8 @@ def calcola_score(evento, sh, sa):
         score += s
         bd.append(f"Forma recente: {forma} → +{s}pt")
     else:
-        score = 45
-        bd.append("Nessuna statistica disponibile — score base 45")
+        score = 50
+        bd.append("Stat non disponibili — score base 50")
     return min(score, 100), bd
 
 def trova_combinazioni(eventi):
@@ -261,8 +259,8 @@ def run():
         s1, bd1 = calcola_score(e1, sh1, sa1)
         s2, bd2 = calcola_score(e2, sh2, sa2)
         sm = (s1 + s2) / 2
-        log.info(f"{e1['home']} vs {e1['away']} ({e1['quota']}) + {e2['home']} vs {e2['away']} ({e2['quota']}) | qComb={qc} | score={sm:.0f}")
         if sm < MIN_SCORE:
+            log.info(f"Skip — score {sm:.0f} < {MIN_SCORE}")
             continue
 
         def blocco(e, s, bd, sh, sa):
@@ -297,12 +295,8 @@ _{datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M UTC')}_
 🔗 tinyurl.com/raddoppiando"""
         invia_telegram(msg)
         inviate += 1
+        log.info(f"Inviata combinata: {e1['home']} vs {e1['away']} + {e2['home']} vs {e2['away']} | qComb={qc}")
 
-    if inviate == 0:
-        invia_telegram(
-            f"ℹ️ *Combinazioni trovate ma score troppo basso* (min {MIN_SCORE}/100)\n"
-            f"_{datetime.now(timezone.utc).strftime('%d/%m %H:%M UTC')}_"
-        )
     log.info(f"=== Fine ciclo — {inviate} messaggi inviati ===")
 
 if __name__ == "__main__":
