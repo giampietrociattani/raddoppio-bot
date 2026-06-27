@@ -18,8 +18,12 @@ MIN_SCORE = int(os.environ.get("MIN_SCORE", "0"))
 
 LEAGUES = [
     "soccer_fifa_world_cup",
-    "soccer_usa_mls",
     "soccer_brazil_campeonato",
+    "soccer_brazil_serie_b",
+    "soccer_china_superliga",
+    "soccer_ireland",
+    "soccer_australia_aleague",
+    "soccer_usa_mls",
     "soccer_argentina_primera_division",
     "soccer_japan_j_league",
     "soccer_italy_serie_a",
@@ -39,6 +43,17 @@ LEAGUE_TO_FD = {
 
 BOOKMAKERS_EU = ["sisal", "bet365", "unibet", "williamhill", "betfair", "pinnacle", "marathonbet"]
 
+def quota_a_score(q):
+    """Converte una quota in score 0-100 basato sulla probabilità implicita.
+    Quota 1.25 (80% prob) → score 80
+    Quota 1.50 (67% prob) → score 67
+    Quota 1.85 (54% prob) → score 54
+    Corretto per agio stimato 6%.
+    """
+    prob_implicita = 1 / q
+    prob_reale = prob_implicita * (1 - 0.06)
+    return min(round(prob_reale * 100), 100)
+
 def fetch_odds():
     eventi = []
     for league in LEAGUES:
@@ -50,7 +65,7 @@ def fetch_odds():
         try:
             r = requests.get(url, timeout=10)
             if r.status_code != 200:
-                log.warning(f"Odds API {league}: {r.status_code} {r.text[:200]}")
+                log.warning(f"Odds API {league}: {r.status_code} {r.text[:100]}")
                 continue
             data = r.json()
             for evento in data:
@@ -158,27 +173,57 @@ def get_team_stats(team_name, comp):
         return None
 
 def calcola_score(evento, sh, sa):
+    """Score 0-100 con tre livelli:
+    1. Se statistiche disponibili: usa dati storici (Over%, GG%, forma)
+    2. Se no statistiche: usa probabilità implicita della quota
+    3. Bonus/malus coerenza mercato
+    """
     mercato = evento["mercato"]
     outcome = evento["outcome"]
+    quota   = evento["quota"]
     score, bd = 0, []
+
     if mercato == "totals" and sh and sa:
+        # Score da statistiche storiche
         if outcome == "Over":
             p = (sh["over25_pct"] + sa["over25_pct"]) / 2
         else:
             p = (100 - sh["over25_pct"] + 100 - sa["over25_pct"]) / 2
         s = round(p * 0.8)
         score += s
-        bd.append(f"Stat Over/Under combinata: {p:.1f}% → +{s}pt")
+        bd.append(f"Stat storiche Over/Under: {p:.1f}% → +{s}pt")
+
     elif mercato == "h2h" and sh and sa:
+        # Score da forma recente
         forma = sh["forma"] if outcome == "home" else (sa["forma"] if outcome == "away" else "")
         pts = sum({"W":3,"D":1,"L":0}.get(c,0) for c in forma[-5:])
         s = round(pts / 15 * 60)
         score += s
         bd.append(f"Forma recente: {forma} → +{s}pt")
+
     else:
-        score = 50
-        bd.append("Stat non disponibili — score base 50")
+        # Score da probabilità implicita della quota (NUOVO)
+        s = quota_a_score(quota)
+        score += s
+        prob_pct = round((1/quota) * 100, 1)
+        bd.append(f"Prob. implicita quota {quota}: {prob_pct}% → score {s}/100")
+
     return min(score, 100), bd
+
+def score_combinata(e1, e2, s1, s2):
+    """Score finale della combinata con bonus coerenza mercati."""
+    sm = (s1 + s2) / 2
+
+    # Bonus se i due mercati si bilanciano (Over+Under o h2h opposte)
+    m1, m2 = e1["mercato"], e2["mercato"]
+    o1, o2 = e1["outcome"], e2["outcome"]
+    if m1 == "totals" and m2 == "totals" and o1 != o2:
+        sm += 5
+    # Malus se stesso mercato stesso segno (Over+Over o Under+Under)
+    if m1 == "totals" and m2 == "totals" and o1 == o2:
+        sm -= 3
+
+    return round(sm)
 
 def trova_combinazioni(eventi):
     now = datetime.now(timezone.utc)
@@ -198,8 +243,9 @@ def trova_combinazioni(eventi):
         qc = round(e1["quota"] * e2["quota"], 4)
         if 1.60 <= qc <= 2.60:
             combos.append((e1, e2, qc))
+    # Ordina per quota combinata più vicina a 2.00
     combos.sort(key=lambda x: abs(x[2] - 2.00))
-    return combos[:5]
+    return combos
 
 def formatta_data(iso):
     try:
@@ -212,7 +258,7 @@ def emoji_forma(f):
     return "".join({"W":"✅","D":"➖","L":"❌"}.get(c,c) for c in f)
 
 def emoji_score(s):
-    return "🟢" if s >= 75 else ("🟡" if s >= 55 else "🔴")
+    return "🟢" if s >= 65 else ("🟡" if s >= 55 else "🔴")
 
 def invia_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -248,19 +294,30 @@ def run():
             f"_{datetime.now(timezone.utc).strftime('%d/%m %H:%M UTC')}_"
         )
         return
+
     inviate = 0
+    usati = set()
+
     for e1, e2, qc in combos:
+        # Evita duplicati — ogni partita appare al massimo una volta
+        if e1["id"] in usati or e2["id"] in usati:
+            continue
+
         comp1 = LEAGUE_TO_FD.get(e1["league"])
         comp2 = LEAGUE_TO_FD.get(e2["league"])
         sh1 = get_team_stats(e1["home"], comp1) if comp1 else None
         sa1 = get_team_stats(e1["away"], comp1) if comp1 else None
         sh2 = get_team_stats(e2["home"], comp2) if comp2 else None
         sa2 = get_team_stats(e2["away"], comp2) if comp2 else None
+
         s1, bd1 = calcola_score(e1, sh1, sa1)
         s2, bd2 = calcola_score(e2, sh2, sa2)
-        sm = (s1 + s2) / 2
+        sm = score_combinata(e1, e2, s1, s2)
+
+        log.info(f"{e1['home']} vs {e1['away']} ({e1['quota']}) + {e2['home']} vs {e2['away']} ({e2['quota']}) | qComb={qc} | score={sm}")
+
         if sm < MIN_SCORE:
-            log.info(f"Skip — score {sm:.0f} < {MIN_SCORE}")
+            log.info(f"  Skip — score {sm} < MIN_SCORE {MIN_SCORE}")
             continue
 
         def blocco(e, s, bd, sh, sa):
@@ -279,7 +336,7 @@ def run():
                 lines.append(f"   ↳ {b}")
             return "\n".join(lines)
 
-        msg = f"""🔔 *COMBINATA TROVATA* {emoji_score(round(sm))} Score: *{round(sm)}/100*
+        msg = f"""🔔 *COMBINATA TROVATA* {emoji_score(sm)} Score: *{sm}/100*
 _{datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M UTC')}_
 
 ━━━━━━━━━━━━━━━━━━━
@@ -293,10 +350,20 @@ _{datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M UTC')}_
 📉 Prob. reale stimata: ~{round((1/e1['quota'])*(1/e2['quota'])*0.93*100,1)}%
 ⚠️ _Verifica la quota su Sisal prima di giocare_
 🔗 tinyurl.com/raddoppiando"""
-        invia_telegram(msg)
-        inviate += 1
-        log.info(f"Inviata combinata: {e1['home']} vs {e1['away']} + {e2['home']} vs {e2['away']} | qComb={qc}")
 
+        invia_telegram(msg)
+        usati.add(e1["id"])
+        usati.add(e2["id"])
+        inviate += 1
+
+        if inviate >= 3:
+            break
+
+    if inviate == 0:
+        invia_telegram(
+            f"ℹ️ *Nessuna combinata valida nelle prossime 48h*\n"
+            f"_{datetime.now(timezone.utc).strftime('%d/%m %H:%M UTC')}_"
+        )
     log.info(f"=== Fine ciclo — {inviate} messaggi inviati ===")
 
 if __name__ == "__main__":
