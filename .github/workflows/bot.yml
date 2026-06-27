@@ -9,8 +9,8 @@ jobs:
   run-bot:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - run: pip install requests schedule
@@ -21,6 +21,6 @@ jobs:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           FOOTBALL_DATA_KEY: ${{ secrets.FOOTBALL_DATA_KEY }}
           FOOTBALL_API_KEY: ${{ secrets.FOOTBALL_API_KEY }}
-          QUOTA_MIN: "1.30"
-          QUOTA_MAX: "1.65"
-          MIN_SCORE: "50"
+          QUOTA_MIN: ${{ secrets.QUOTA_MIN }}
+          QUOTA_MAX: ${{ secrets.QUOTA_MAX }}
+          MIN_SCORE: ${{ secrets.MIN_SCORE }}
