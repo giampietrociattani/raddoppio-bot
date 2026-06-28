@@ -43,16 +43,12 @@ LEAGUE_TO_FD = {
 
 BOOKMAKERS_EU = ["sisal", "bet365", "unibet", "williamhill", "betfair", "pinnacle", "marathonbet"]
 
+
 def quota_a_score(q):
-    """Converte una quota in score 0-100 basato sulla probabilità implicita.
-    Quota 1.25 (80% prob) → score 80
-    Quota 1.50 (67% prob) → score 67
-    Quota 1.85 (54% prob) → score 54
-    Corretto per agio stimato 6%.
-    """
     prob_implicita = 1 / q
     prob_reale = prob_implicita * (1 - 0.06)
     return min(round(prob_reale * 100), 100)
+
 
 def fetch_odds():
     eventi = []
@@ -121,7 +117,9 @@ def fetch_odds():
     log.info(f"Quote nel range {QUOTA_MIN}-{QUOTA_MAX} trovate: {len(eventi)}")
     return eventi
 
+
 _cache = {}
+
 
 def get_team_stats(team_name, comp):
     key = f"{team_name}_{comp}"
@@ -172,19 +170,14 @@ def get_team_stats(team_name, comp):
         log.warning(f"Stats error {team_name}: {e}")
         return None
 
+
 def calcola_score(evento, sh, sa):
-    """Score 0-100 con tre livelli:
-    1. Se statistiche disponibili: usa dati storici (Over%, GG%, forma)
-    2. Se no statistiche: usa probabilità implicita della quota
-    3. Bonus/malus coerenza mercato
-    """
     mercato = evento["mercato"]
     outcome = evento["outcome"]
     quota   = evento["quota"]
     score, bd = 0, []
 
     if mercato == "totals" and sh and sa:
-        # Score da statistiche storiche
         if outcome == "Over":
             p = (sh["over25_pct"] + sa["over25_pct"]) / 2
         else:
@@ -192,17 +185,13 @@ def calcola_score(evento, sh, sa):
         s = round(p * 0.8)
         score += s
         bd.append(f"Stat storiche Over/Under: {p:.1f}% → +{s}pt")
-
     elif mercato == "h2h" and sh and sa:
-        # Score da forma recente
         forma = sh["forma"] if outcome == "home" else (sa["forma"] if outcome == "away" else "")
         pts = sum({"W":3,"D":1,"L":0}.get(c,0) for c in forma[-5:])
         s = round(pts / 15 * 60)
         score += s
         bd.append(f"Forma recente: {forma} → +{s}pt")
-
     else:
-        # Score da probabilità implicita della quota (NUOVO)
         s = quota_a_score(quota)
         score += s
         prob_pct = round((1/quota) * 100, 1)
@@ -210,20 +199,17 @@ def calcola_score(evento, sh, sa):
 
     return min(score, 100), bd
 
-def score_combinata(e1, e2, s1, s2):
-    """Score finale della combinata con bonus coerenza mercati."""
-    sm = (s1 + s2) / 2
 
-    # Bonus se i due mercati si bilanciano (Over+Under o h2h opposte)
+def score_combinata(e1, e2, s1, s2):
+    sm = (s1 + s2) / 2
     m1, m2 = e1["mercato"], e2["mercato"]
     o1, o2 = e1["outcome"], e2["outcome"]
     if m1 == "totals" and m2 == "totals" and o1 != o2:
         sm += 5
-    # Malus se stesso mercato stesso segno (Over+Over o Under+Under)
     if m1 == "totals" and m2 == "totals" and o1 == o2:
         sm -= 3
-
     return round(sm)
+
 
 def trova_combinazioni(eventi):
     now = datetime.now(timezone.utc)
@@ -243,9 +229,9 @@ def trova_combinazioni(eventi):
         qc = round(e1["quota"] * e2["quota"], 4)
         if 1.60 <= qc <= 2.60:
             combos.append((e1, e2, qc))
-    # Ordina per quota combinata più vicina a 2.00
     combos.sort(key=lambda x: abs(x[2] - 2.00))
     return combos
+
 
 def formatta_data(iso):
     try:
@@ -254,11 +240,14 @@ def formatta_data(iso):
     except:
         return iso
 
+
 def emoji_forma(f):
     return "".join({"W":"✅","D":"➖","L":"❌"}.get(c,c) for c in f)
 
+
 def emoji_score(s):
     return "🟢" if s >= 65 else ("🟡" if s >= 55 else "🔴")
+
 
 def invia_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -276,10 +265,26 @@ def invia_telegram(msg):
     except Exception as e:
         log.error(f"Telegram send error: {e}")
 
+
 def run():
     log.info("=== Avvio ciclo bot ===")
     log.info(f"Range quote: {QUOTA_MIN} - {QUOTA_MAX} | MIN_SCORE: {MIN_SCORE}")
     _cache.clear()
+
+    # Import sheets solo se GOOGLE_CREDENTIALS è configurato
+    sheets_ok = bool(os.environ.get("GOOGLE_CREDENTIALS"))
+    if sheets_ok:
+        try:
+            import sheets as sh_module
+            sent_keys = sh_module.get_sent_keys()
+            log.info(f"Deduplicazione: {len(sent_keys)} combo già inviate in precedenza")
+        except Exception as e:
+            log.warning(f"Sheet non disponibile, deduplicazione disabilitata: {e}")
+            sheets_ok = False
+            sent_keys = set()
+    else:
+        sent_keys = set()
+
     eventi = fetch_odds()
     if not eventi:
         invia_telegram(
@@ -287,6 +292,7 @@ def run():
             f"_{datetime.now(timezone.utc).strftime('%d/%m %H:%M UTC')}_"
         )
         return
+
     combos = trova_combinazioni(eventi)
     if not combos:
         invia_telegram(
@@ -297,11 +303,20 @@ def run():
 
     inviate = 0
     usati = set()
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
     for e1, e2, qc in combos:
-        # Evita duplicati — ogni partita appare al massimo una volta
         if e1["id"] in usati or e2["id"] in usati:
             continue
+
+        # ── DEDUPLICAZIONE PERSISTENTE ──
+        ck = None
+        if sheets_ok:
+            import sheets as sh_module
+            ck = sh_module.combo_key(e1, e2)
+            if ck in sent_keys:
+                log.info(f"Skip duplicato: {e1['home']} vs {e1['away']} + {e2['home']} vs {e2['away']}")
+                continue
 
         comp1 = LEAGUE_TO_FD.get(e1["league"])
         comp2 = LEAGUE_TO_FD.get(e2["league"])
@@ -352,6 +367,17 @@ _{datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M UTC')}_
 🔗 tinyurl.com/raddoppiando"""
 
         invia_telegram(msg)
+
+        # ── LOG SU GOOGLE SHEET ──
+        if sheets_ok and ck:
+            try:
+                import sheets as sh_module
+                sh_module.log_combinata(e1, e2, s1, s2, sm, qc, now_str)
+                sh_module.log_partite(e1, e2, s1, s2, qc, ck, now_str)
+                sent_keys.add(ck)
+            except Exception as e:
+                log.warning(f"Errore log sheet: {e}")
+
         usati.add(e1["id"])
         usati.add(e2["id"])
         inviate += 1
@@ -365,6 +391,7 @@ _{datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M UTC')}_
             f"_{datetime.now(timezone.utc).strftime('%d/%m %H:%M UTC')}_"
         )
     log.info(f"=== Fine ciclo — {inviate} messaggi inviati ===")
+
 
 if __name__ == "__main__":
     run()
