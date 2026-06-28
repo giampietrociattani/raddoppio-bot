@@ -10,11 +10,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install requests schedule
-      - run: python bot.py
+
+      - run: pip install requests cryptography
+
+      - name: Aggiorna esiti partite concluse
+        run: python update_results.py
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+
+      - name: Esegui bot combinata
+        run: python bot.py
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -24,3 +34,4 @@ jobs:
           QUOTA_MIN: ${{ secrets.QUOTA_MIN }}
           QUOTA_MAX: ${{ secrets.QUOTA_MAX }}
           MIN_SCORE: ${{ secrets.MIN_SCORE }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
