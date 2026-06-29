@@ -108,11 +108,11 @@ if __name__ == "__main__":
         # R4: Formule KPI
         [
             "=COUNTA(Combinazioni!A2:A)",                                          # Alert totali
-            "=SUMIF(Combinazioni!U2:U,1,Combinazioni!U2:U)",                       # Giocate (colonna U = 1)
+            "=SUMIF(Combinazioni!U2:U;1;Combinazioni!U2:U)",                       # Giocate (colonna U = 1)
             '=COUNTIFS(Combinazioni!U2:U,1,Combinazioni!S2:S,"✅ WIN*")',           # WIN
             '=COUNTIFS(Combinazioni!U2:U,1,Combinazioni!S2:S,"❌ LOSS*")',          # LOSS
             '=IFERROR(COUNTIFS(Combinazioni!U2:U,1,Combinazioni!S2:S,"✅ WIN*")/SUMIF(Combinazioni!U2:U,1,Combinazioni!U2:U),"–")',  # Win Rate
-            "=IFERROR(AVERAGEIF(Combinazioni!R2:R,\">0\",Combinazioni!R2:R),\"–\")",  # Score medio
+            "=IFERROR(AVERAGEIF(Combinazioni!R2:R;\">0\";Combinazioni!R2:R);\"–\")",  # Score medio
         ],
         [""],
         # R6: Sezione campionati
@@ -166,8 +166,8 @@ if __name__ == "__main__":
         wd = weekday_map[giorno]
         row = [
             giorno,
-            f"=SUMPRODUCT((WEEKDAY(Combinazioni!A2:A,2)={wd})*(Combinazioni!A2:A<>\"\"))",
-            f"=SUMPRODUCT((WEEKDAY(Combinazioni!A2:A,2)={wd})*(Combinazioni!U2:U=1))",
+            f"=SUMPRODUCT((WEEKDAY(Combinazioni!A2:A;2)={wd})*(Combinazioni!A2:A<>\"\"))",
+            f"=SUMPRODUCT((WEEKDAY(Combinazioni!A2:A;2)={wd})*(Combinazioni!U2:U=1))",
             f'=SUMPRODUCT((WEEKDAY(Combinazioni!A2:A,2)={wd})*(Combinazioni!U2:U=1)*(Combinazioni!S2:S="✅ WIN"))',
             f'=SUMPRODUCT((WEEKDAY(Combinazioni!A2:A,2)={wd})*(Combinazioni!U2:U=1)*(Combinazioni!S2:S="❌ LOSS"))',
             f'=IFERROR(SUMPRODUCT((WEEKDAY(Combinazioni!A2:A,2)={wd})*(Combinazioni!U2:U=1)*(Combinazioni!S2:S="✅ WIN"))/SUMPRODUCT((WEEKDAY(Combinazioni!A2:A,2)={wd})*(Combinazioni!U2:U=1)),"–")',
