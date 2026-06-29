@@ -17,6 +17,11 @@ jobs:
 
       - run: pip install requests cryptography
 
+      - name: Setup Dashboard (one-shot)
+        run: python build_dashboard.py
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+
       - name: Aggiorna esiti partite concluse
         run: python update_results.py
         env:
