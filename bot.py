@@ -18,19 +18,7 @@ MIN_SCORE = int(os.environ.get("MIN_SCORE", "0"))
 
 LEAGUES = [
     "soccer_fifa_world_cup",
-    "soccer_brazil_campeonato",
     "soccer_brazil_serie_b",
-    "soccer_china_superliga",
-    "soccer_ireland",
-    "soccer_australia_aleague",
-    "soccer_usa_mls",
-    "soccer_argentina_primera_division",
-    "soccer_japan_j_league",
-    "soccer_italy_serie_a",
-    "soccer_epl",
-    "soccer_germany_bundesliga",
-    "soccer_spain_la_liga",
-    "soccer_france_ligue_one",
 ]
 
 LEAGUE_TO_FD = {
