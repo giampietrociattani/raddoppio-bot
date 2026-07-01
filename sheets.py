@@ -219,10 +219,12 @@ def log_partite(e1, e2, s1, s2, qc, combo_k, now_str):
 # AGGIORNAMENTO ESITI — chiamato da update_results.py
 # ---------------------------------------------------------------------------
 
-def calcola_esito(selezione, gol_casa, gol_ospite):
-    """Determina WIN/LOSS dato selezione e risultato."""
+def calcola_esito(selezione, gol_casa, gol_ospite, partita=""):
+    """Determina WIN/LOSS dato selezione e risultato.
+    partita: stringa tipo 'Germany vs Paraguay' per riconoscere selezioni per nome squadra.
+    """
     tot = gol_casa + gol_ospite
-    sel = selezione.lower()
+    sel = selezione.lower().strip()
 
     if "over" in sel:
         try:
@@ -242,6 +244,13 @@ def calcola_esito(selezione, gol_casa, gol_ospite):
         return "✅ WIN" if gol_ospite > gol_casa else "❌ LOSS"
     elif "pareggio" in sel or "(x)" in sel:
         return "✅ WIN" if gol_casa == gol_ospite else "❌ LOSS"
+    elif partita and " vs " in partita:
+        home_team = partita.split(" vs ")[0].strip().lower()
+        away_team = partita.split(" vs ")[1].strip().lower()
+        if sel in home_team or home_team in sel:
+            return "✅ WIN" if gol_casa > gol_ospite else "❌ LOSS"
+        elif sel in away_team or away_team in sel:
+            return "✅ WIN" if gol_ospite > gol_casa else "❌ LOSS"
     return "N/D"
 
 
@@ -275,7 +284,8 @@ def update_results(risultati):
         gc = match["gol_casa"]
         go = match["gol_ospite"]
         risultato = f"{gc}-{go}"
-        esito = calcola_esito(selezione, gc, go)
+        partita = row[1] if len(row) > 1 else ""
+        esito = calcola_esito(selezione, gc, go, partita)
         sheet_row = i + 2  # 1-indexed + header
 
         batch.append({"range": f"Partite!I{sheet_row}", "values": [[risultato]]})
