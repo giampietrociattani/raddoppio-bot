@@ -2,7 +2,7 @@ name: Raddoppio Bot
 
 on:
   schedule:
-    - cron: '0 6,9,12,15,18,21 * * *'
+    - cron: '0 9 * * *'
   workflow_dispatch:
 
 jobs:
@@ -16,11 +16,6 @@ jobs:
           python-version: '3.11'
 
       - run: pip install requests cryptography
-
-      - name: Setup Dashboard (one-shot)
-        run: python build_dashboard.py
-        env:
-          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
 
       - name: Aggiorna esiti partite concluse
         run: python update_results.py
